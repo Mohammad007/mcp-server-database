@@ -1,10 +1,16 @@
+#!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
 import knex from "knex";
 import dotenv from "dotenv";
+import { faker } from "@faker-js/faker";
+import { format } from "sql-formatter";
+import * as fs from "fs/promises";
+import * as path from "path";
 dotenv.config();
 const dbType = (process.env.DB_TYPE || "mysql2");
+const safeMode = process.env.SAFE_MODE === "true";
 const config = {
     client: dbType,
     connection: dbType === "sqlite3"
@@ -20,8 +26,8 @@ const config = {
 };
 const db = knex(config);
 const server = new Server({
-    name: "universal-db-mcp-server",
-    version: "2.0.0",
+    name: "pro-universal-db-mcp",
+    version: "3.0.0",
 }, {
     capabilities: {
         tools: {},
@@ -40,112 +46,245 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: "Get schema/columns for a specific table",
                 inputSchema: {
                     type: "object",
-                    properties: {
-                        table: { type: "string" },
-                    },
+                    properties: { table: { type: "string" } },
                     required: ["table"],
                 },
             },
             {
+                name: "get_relationships",
+                description: "Discover foreign key relationships between tables",
+                inputSchema: { type: "object", properties: {} },
+            },
+            {
                 name: "execute_query",
-                description: "Execute a raw SQL query",
+                description: "Execute a raw SQL query (SELECT only in SAFE_MODE)",
                 inputSchema: {
                     type: "object",
-                    properties: {
-                        sql: { type: "string" },
-                    },
+                    properties: { sql: { type: "string" } },
+                    required: ["sql"],
+                },
+            },
+            {
+                name: "explain_query",
+                description: "Run EXPLAIN on a query to analyze performance",
+                inputSchema: {
+                    type: "object",
+                    properties: { sql: { type: "string" } },
                     required: ["sql"],
                 },
             },
             {
                 name: "insert_data",
-                description: "Insert a row into a table",
+                description: "Insert a row into a table (Disabled in SAFE_MODE)",
                 inputSchema: {
                     type: "object",
                     properties: {
                         table: { type: "string" },
-                        data: { type: "object", description: "Column-value pairs" },
+                        data: { type: "object" },
                     },
                     required: ["table", "data"],
                 },
             },
             {
-                name: "update_data",
-                description: "Update rows in a table",
+                name: "seed_data",
+                description: "Seed a table with dummy data using Faker.js (Disabled in SAFE_MODE)",
                 inputSchema: {
                     type: "object",
                     properties: {
                         table: { type: "string" },
-                        data: { type: "object", description: "Column-value pairs to update" },
-                        where: { type: "object", description: "Condition for update" },
+                        count: { type: "number", default: 10 },
+                        mapping: {
+                            type: "object",
+                            description: "Mapping of columns to Faker methods (e.g. { name: 'person.fullName', email: 'internet.email' })"
+                        },
+                    },
+                    required: ["table", "mapping"],
+                },
+            },
+            {
+                name: "update_data",
+                description: "Update rows (Disabled in SAFE_MODE)",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        table: { type: "string" },
+                        data: { type: "object" },
+                        where: { type: "object" },
                     },
                     required: ["table", "data", "where"],
                 },
             },
             {
                 name: "delete_data",
-                description: "Delete rows from a table",
+                description: "Delete rows (Disabled in SAFE_MODE)",
                 inputSchema: {
                     type: "object",
                     properties: {
                         table: { type: "string" },
-                        where: { type: "object", description: "Condition for deletion" },
+                        where: { type: "object" },
                     },
                     required: ["table", "where"],
+                },
+            },
+            {
+                name: "execute_migration",
+                description: "Run CREATE/ALTER/DROP commands (Disabled in SAFE_MODE)",
+                inputSchema: {
+                    type: "object",
+                    properties: { sql: { type: "string" } },
+                    required: ["sql"],
+                },
+            },
+            {
+                name: "format_sql",
+                description: "Pretty-print and format a raw SQL query",
+                inputSchema: {
+                    type: "object",
+                    properties: { sql: { type: "string" } },
+                    required: ["sql"],
+                },
+            },
+            {
+                name: "export_data",
+                description: "Export query results to a file (JSON or CSV)",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        sql: { type: "string" },
+                        format: { type: "string", enum: ["json", "csv"], default: "json" },
+                        filename: { type: "string" }
+                    },
+                    required: ["sql", "filename"],
                 },
             },
         ],
     };
 });
+function checkSafeMode(name, sql) {
+    if (!safeMode)
+        return;
+    const destructiveTools = ["insert_data", "update_data", "delete_data", "execute_migration", "seed_data"];
+    if (destructiveTools.includes(name)) {
+        throw new Error(`Tool '${name}' is disabled in SAFE_MODE.`);
+    }
+    if (name === "execute_query" && sql) {
+        const trimmed = sql.trim().toLowerCase();
+        if (!trimmed.startsWith("select") && !trimmed.startsWith("show") && !trimmed.startsWith("describe")) {
+            throw new Error("Only read-only queries are allowed in SAFE_MODE.");
+        }
+    }
+}
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
+        checkSafeMode(name, args?.sql);
         switch (name) {
             case "list_tables": {
                 let tables;
                 if (dbType === "pg") {
-                    tables = await db("information_schema.tables")
-                        .where({ table_schema: "public" })
-                        .select("table_name");
+                    tables = await db("information_schema.tables").where({ table_schema: "public" }).select("table_name");
                 }
                 else if (dbType === "sqlite3") {
-                    tables = await db("sqlite_master")
-                        .where({ type: "table" })
-                        .select("name as table_name");
+                    tables = await db("sqlite_master").where({ type: "table" }).select("name as table_name");
                 }
                 else {
-                    // MySQL
                     const [rows] = await db.raw("SHOW TABLES");
                     tables = rows;
                 }
                 return { content: [{ type: "text", text: JSON.stringify(tables, null, 2) }] };
             }
             case "describe_table": {
-                const table = args?.table;
-                const columns = await db(table).columnInfo();
+                const columns = await db(args.table).columnInfo();
                 return { content: [{ type: "text", text: JSON.stringify(columns, null, 2) }] };
             }
+            case "get_relationships": {
+                let rels;
+                if (dbType === "mysql2") {
+                    rels = await db.raw(`
+            SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME 
+            FROM information_schema.KEY_COLUMN_USAGE 
+            WHERE TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL`, [process.env.DB_DATABASE]);
+                    rels = rels[0];
+                }
+                else if (dbType === "sqlite3") {
+                    const tables = await db("sqlite_master").where({ type: "table" }).select("name");
+                    rels = [];
+                    for (const t of tables) {
+                        const fks = await db.raw(`PRAGMA foreign_key_list("${t.name}")`);
+                        rels.push(...fks.map((f) => ({ table: t.name, ...f })));
+                    }
+                }
+                else {
+                    rels = "Relationship discovery for this DB type is coming soon.";
+                }
+                return { content: [{ type: "text", text: JSON.stringify(rels, null, 2) }] };
+            }
             case "execute_query": {
-                const sql = args?.sql;
-                const result = await db.raw(sql);
-                // Knex raw returns different formats based on dialect
+                const result = await db.raw(args.sql);
                 const output = dbType === "mysql2" ? result[0] : (dbType === "pg" ? result.rows : result);
                 return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }] };
             }
+            case "explain_query": {
+                const result = await db.raw(`EXPLAIN ${args.sql}`);
+                return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+            }
             case "insert_data": {
-                const { table, data } = args;
-                const result = await db(table).insert(data);
-                return { content: [{ type: "text", text: `Inserted: ${JSON.stringify(result)}` }] };
+                const res = await db(args.table).insert(args.data);
+                return { content: [{ type: "text", text: `Inserted ID: ${JSON.stringify(res)}` }] };
+            }
+            case "seed_data": {
+                const { table, count, mapping } = args;
+                const dummyRows = [];
+                for (let i = 0; i < (count || 10); i++) {
+                    const row = {};
+                    for (const [col, fakerPath] of Object.entries(mapping)) {
+                        const [namespace, method] = fakerPath.split(".");
+                        try {
+                            const fn = faker[namespace][method];
+                            if (typeof fn === "function") {
+                                row[col] = fn();
+                            }
+                        }
+                        catch (e) {
+                            console.error(`Faker failed for ${fakerPath}`);
+                        }
+                    }
+                    dummyRows.push(row);
+                }
+                await db(table).insert(dummyRows);
+                return { content: [{ type: "text", text: `Successfully seeded ${count} rows into ${table}` }] };
             }
             case "update_data": {
-                const { table, data, where } = args;
-                const count = await db(table).where(where).update(data);
+                const count = await db(args.table).where(args.where).update(args.data);
                 return { content: [{ type: "text", text: `Updated ${count} rows.` }] };
             }
             case "delete_data": {
-                const { table, where } = args;
-                const count = await db(table).where(where).del();
+                const count = await db(args.table).where(args.where).del();
                 return { content: [{ type: "text", text: `Deleted ${count} rows.` }] };
+            }
+            case "execute_migration": {
+                await db.raw(args.sql);
+                return { content: [{ type: "text", text: "Migration executed successfully." }] };
+            }
+            case "format_sql": {
+                const formatted = format(args.sql, { language: "mysql" });
+                return { content: [{ type: "text", text: formatted }] };
+            }
+            case "export_data": {
+                const { sql, format: fmt, filename } = args;
+                const result = await db.raw(sql);
+                const data = dbType === "mysql2" ? result[0] : (dbType === "pg" ? result.rows : result);
+                let content = "";
+                if (fmt === "json") {
+                    content = JSON.stringify(data, null, 2);
+                }
+                else {
+                    const headers = Object.keys(data[0] || {}).join(",");
+                    const rows = data.map((r) => Object.values(r).join(",")).join("\n");
+                    content = `${headers}\n${rows}`;
+                }
+                await fs.writeFile(filename, content);
+                return { content: [{ type: "text", text: `Data exported to ${path.resolve(filename)}` }] };
             }
             default:
                 throw new Error(`Unknown tool: ${name}`);
@@ -161,7 +300,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error(`${dbType} MCP server running on stdio`);
+    console.error(`Pro Universal DB MCP server (${dbType}) running on stdio`);
 }
 main().catch((error) => {
     console.error("Server error:", error);

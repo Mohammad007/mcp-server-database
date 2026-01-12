@@ -1,72 +1,47 @@
-# Universal SQL MCP Server
+# Pro Universal SQL MCP Server
 
-A powerful **Model Context Protocol (MCP)** server that allows AI agents (like Cursor, Claude Desktop, or custom clients) to interact with your databases directly. It supports **MySQL**, **PostgreSQL**, and **SQLite**.
+A professional-grade **Model Context Protocol (MCP)** server for interacting with **MySQL**, **Postgres**, and **SQLite**. This server goes beyond basic read/write, offering advanced features for schema analysis, dummy data generation, and performance optimization.
 
-## 🚀 What is this?
+## 🚀 New Pro Features
 
-This server acts as a bridge between an AI model and your database. Instead of copying and pasting database schemas, you can simply ask the AI to "list my tables", "describe a table", or "find the last 10 orders". The AI will use the tools provided by this server to fetch the data it needs to help you code better.
-
-## ⚙️ How it works
-
-The server implements the **Model Context Protocol (MCP)**. It runs as a background process on your machine. When you ask Cursor a question about your database:
-1. **Cursor** identifies the appropriate tool (e.g., `list_tables`).
-2. **Cursor** sends a request to this server via Standard Input/Output (stdio).
-3. **The Server** executes the corresponding SQL command using **Knex.js**.
-4. **The Server** returns the data as JSON to Cursor.
-5. **Cursor** interprets the JSON and provides you with a natural language answer.
-
-## ✨ Features
-
-- **Multi-Database Support**: Connect to MySQL, Postgres, or SQLite using the same server.
-- **Full CRUD Support**:
-  - `list_tables`: See all tables in your database.
-  - `describe_table`: Get detailed column information (types, keys, etc.).
-  - `execute_query`: Run raw `SELECT` queries for data analysis.
-  - `insert_data`: Add new records via AI prompts.
-  - `update_data`: Modify existing records easily.
-  - `delete_data`: Remove records based on specific criteria.
-- **Security**: Designed to run locally on your machine, giving you full control over database access.
+1.  **Smart Schema Discovery**: Automatically discovers Foreign Key relationships so AI can write complex JOIN queries without being told.
+2.  **Smart Seeding (Faker.js)**: Generate hundreds of realistic dummy records (names, emails, dates) in seconds.
+3.  **Performance Optimization**: `EXPLAIN` query analyzer to help AI suggest better indexes.
+4.  **Data Export**: Export any query results directly to **CSV** or **JSON** files.
+5.  **Schema Migrations**: Safely execute `CREATE`, `ALTER`, and `DROP` commands via AI.
+6.  **SQL Formatter**: Pretty-print raw SQL queries for better readability.
+7.  **Safe Mode (Security)**: A toggle to restrict AI to Read-Only operations on production databases.
 
 ## 🛠️ Installation
 
-1. **Clone the repository**:
-   ```bash
-   git clone <your-repo-url>
-   cd db_mcp
-   ```
+1.  **Clone & Install**:
+    ```bash
+    git clone <repo-url>
+    npm install
+    ```
+2.  **Configure `.env`**:
+    ```env
+    DB_TYPE=mysql2  # Options: mysql2, pg, sqlite3
+    DB_HOST=localhost
+    DB_PORT=3306
+    DB_USER=root
+    DB_PASSWORD=your_password
+    DB_DATABASE=test
+    SAFE_MODE=false # Set true for Read-Only mode
+    ```
+3.  **Build**:
+    ```bash
+    npm run build
+    ```
 
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
+## 🔌 Cursor / mcp.json Configuration
 
-3. **Configure environment variables**:
-   Create a `.env` file in the root directory:
-   ```env
-   DB_TYPE=mysql2  # Options: mysql2, pg, sqlite3
-   DB_HOST=localhost
-   DB_PORT=3306
-   DB_USER=root
-   DB_PASSWORD=your_password
-   DB_DATABASE=your_db_name
-   # SQLITE_PATH=./database.sqlite (Only for sqlite3)
-   ```
-
-4. **Build the project**:
-   ```bash
-   npm run build
-   ```
-
-## 🔌 How to use in Cursor
-
-### Method 1: Global `mcp.json` (Recommended)
-
-Add this configuration to your Cursor's global MCP settings file located at `%USERPROFILE%\.cursor\mcp.json` (Windows) or `~/.cursor/mcp.json` (macOS/Linux):
+Update your global `mcp.json` file:
 
 ```json
 {
   "mcpServers": {
-    "universal-db-mcp": {
+    "pro-universal-db": {
       "command": "node",
       "args": ["D:/App/db_mcp/build/index.js"],
       "env": {
@@ -75,38 +50,23 @@ Add this configuration to your Cursor's global MCP settings file located at `%US
         "DB_PORT": "3306",
         "DB_USER": "root",
         "DB_PASSWORD": "",
-        "DB_DATABASE": "test"
+        "DB_DATABASE": "test",
+        "SAFE_MODE": "false"
       }
     }
   }
 }
 ```
-*Note: Ensure the path in `args` points to your actual project location.*
 
-### Method 2: Cursor UI
-1. Open Cursor Settings -> Features -> MCP.
-2. Click **+ Add New MCP Server**.
-3. Name: `Universal DB`
-4. Type: `command`
-5. Command: `node D:/App/db_mcp/build/index.js`
+## 💬 Powerful New Prompts
 
-## 💬 Sample Prompts
+- **Smart Joins**: "Show me all orders made by John Doe" (AI will use relationship discovery).
+- **Seeding**: "Seed my `users` table with 50 dummy records using `person.fullName` and `internet.email`."
+- **Analysis**: "Explain why this query is slow and suggest an index."
+- **Exporting**: "Export all orders from last week to a file named `report.csv`."
+- **Migrations**: "Add a `profile_picture` column to the `users` table."
+- **Format**: "Format this messy SQL query: `SELECT * FROM users WHERE id=1`."
 
-Once configured, you can talk to your database in Cursor Chat (`Ctrl+L`):
+## 🛡️ Security (Safe Mode)
 
-- **Explore**: "What tables are in my database?"
-- **Understand**: "Describe the structure of the `users` table."
-- **Read**: "Show me the 5 most recent entries from the `blogs` table."
-- **Write**: "Add a new user with name 'Alice' and email 'alice@example.com'."
-- **Update**: "Change the status of order #5 to 'completed'."
-- **Complex**: "Find all products that have never been ordered and list their names."
-
-## 📜 Available Commands
-
-- `npm run build`: Compiles TypeScript to JavaScript in the `build/` folder.
-- `npm start`: Runs the compiled server (used by MCP clients).
-- `npm run dev`: Runs the server directly using `ts-node` for development.
-
-## 🛡️ Security Note
-
-This server allows the AI to perform write operations (`INSERT`, `UPDATE`, `DELETE`). Always review the SQL queries generated by the AI before confirming if prompted, and use a database user with the minimum required permissions.
+Set `SAFE_MODE=true` in your `.env` or `mcp.json` to disable all destructive operations (`INSERT`, `UPDATE`, `DELETE`, `MIGRATION`, `SEEDING`). This is highly recommended for production environments.
